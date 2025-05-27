@@ -1,0 +1,69 @@
+{
+:local MailSubject ("MikroTik Backup from ".[/system identity get name]);
+
+:local CurrentTime [/system clock get time];
+:local CurrentDate [/system clock get date];
+
+:local Hour [:tostr [:pick $CurrentTime 0 2]];
+:local Min [:tostr [:pick $CurrentTime 3 5]];
+:local Day [:tostr [:pick $CurrentDate 4 6]];
+:local Month [:tostr [:pick $CurrentDate 0 3]];
+:local Year [:tostr [:pick $CurrentDate 7 [:len $CurrentDate]]];
+# Change this to your values 
+:local email "example@mail.com";
+# Password for the encrypted backup file. Note that since RouterOS v6.43 without a provided password, the backup file is unencrypted. 
+# See https://help.mikrotik.com/docs/spaces/ROS/pages/40992852/Backup
+:local ecryptionPassword "Your_encryption_password";
+
+:local sysname [/system identity get name]
+:local textfileName
+:local backupfileName
+:local time [/system clock get time]
+:local date [/system clock get date]
+:local uptime [/system resource get uptime]
+:local newdate "";
+:for i from=0 to=([:len $date]-1) do={ :local tmp [:pick $date $i];
+:if ($tmp !="/") do={ :set newdate "$newdate$tmp" }
+:if ($tmp ="/") do={}
+}
+
+:set textfileName ($newdate."-".$sysname.".rsc")
+:execute [/export file=$textfileName]
+
+:do {
+  :local fileName ([/system identity get name]."__$Day_$Month_$Year__$Hour_$Min.backup");
+  /system backup save name=$fileName encryption=aes-sha256 password=$ecryptionPassword;
+  :log info "Backup file ($fileName) created success";
+  
+    :delay 2s;
+    :local logMessagesCritical;
+    :set logMessagesCritical "";
+ 
+    :delay 2s;
+    :local logMessagesError;
+    :set logMessagesError "";
+			 :do {       
+    /tool e-mail send to=$email subject=($MailSubject." ($Day/$Month/$Year $Hour:$Min)") \
+      body=( \
+        "System information:". \
+        "\n____________________\n \n". \
+        "Identity: ".[/system identity get name]."\n". \		
+        "Board name: ".[/system resource get platform]." ".[/system resource get board-name]."\n". \
+        "Version: ".[/system resource get version]."\n". \
+        "Current firmware: ".[/system routerboard get current-firmware]."\n". \
+        "Free HDD space: ".[:put ([/system resource get free-hdd-space]/1048576);]."Mb, (total: ".[:put ([/system resource get total-hdd-space]/1048576);]."Mb)\n". \
+		    "Bad-blocks: ".[:put ([/system resource get bad-blocks])]."%\n". \
+        "Free memory: ".[:put ([/system resource get free-memory]/1048576);]."Mb,  (total: ".[:put ([/system resource get total-memory]/1048576);]."Mb)\n". \
+        "Uptime: ".[/system resource get uptime]."\n\n". \
+		    "Log message CRITICAL: \n********************************\n".[:put ($logMessagesCritical)]."\n". \
+        "Log message ERROR: \n********************************\n".[:put ($logMessagesError)]) file=($fileName,$textfileName);
+    :log info "Mail with backup sending success";
+    :do {
+      :delay 30s;
+      /file remove $fileName;
+      /file remove $textfileName;
+      :log info "Remove backup file success";
+    } on-error={:log warning "Cannot remove backup file $fileName";};
+  } on-error={:log warning "Email sending failed!";};
+} on-error={:log error "Backup creation failed!";};
+}
