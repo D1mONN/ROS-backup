@@ -15,20 +15,6 @@
 :local CurrentTime [/system clock get time]; # e.g., 09:44:23
 
 :local Month [:tostr [:pick $CurrentDate 0 3]];
-:local Day [:tostr [:pick $CurrentDate 4 6]];
-:local Year [:tostr [:pick $CurrentDate 7 11]]; # Assuming YYYY format
-
-:local Hour [:tostr [:pick $CurrentTime 0 2]];
-:local Minute [:tostr [:pick $CurrentTime 3 5]];
-:local Second [:tostr [:pick $CurrentTime 6 8]];
-
-# Create a consistent timestamp for filenames and email subject
-# Format: YYYY-Mon-DD-HHMM
-:local FileTimestamp "$Year-$Month-$Day-$Hour$Minute";
-# Format for email display: DD/Mon/YYYY HH:MM:SS
-:local EmailTimestamp "$Day/$Month/$Year $Hour:$Minute:$Second";
-
-:local MailSubject ("MikroTik Backup from " . $SystemName . " (" . $EmailTimestamp . ")");
 
 # Define filenames
 :local RscFileName "$SystemName-$FileTimestamp.rsc";
