@@ -1,6 +1,6 @@
 # === Script Configuration ===
 # Email address to send backups to
-:local EmailTo "dmytrokovalchuk.sl@ukr.net";
+:local EmailTo "example@mail.com";
 # File containing the encryption password (must exist on the router)
 :local PasswordFileName "new.txt"; 
 # --- End Configuration ---
