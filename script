@@ -1,69 +1,126 @@
-{
-:local MailSubject ("MikroTik Backup from ".[/system identity get name]);
+# === Script Configuration ===
+# Email address to send backups to
+:local EmailTo "example@mail.com";
+# Password for the encrypted backup file.
+# Note: Since RouterOS v6.43, without a password, the backup file is unencrypted.
+# See https://help.mikrotik.com/docs/spaces/ROS/pages/40992852/Backup
+:local BackupEncryptionPassword "Your_encryption_password";
+# === End of Script Configuration ===
 
-:local CurrentTime [/system clock get time];
-:local CurrentDate [/system clock get date];
+# Get system identity once
+:local SystemName [/system identity get name];
+
+# Get current date and time components
+:local CurrentDate [/system clock get date]; # e.g., may/28/2025
+:local CurrentTime [/system clock get time]; # e.g., 09:44:23
+
+:local Month [:tostr [:pick $CurrentDate 0 3]];
+:local Day [:tostr [:pick $CurrentDate 4 6]];
+:local Year [:tostr [:pick $CurrentDate 7 11]]; # Assuming YYYY format
 
 :local Hour [:tostr [:pick $CurrentTime 0 2]];
-:local Min [:tostr [:pick $CurrentTime 3 5]];
-:local Day [:tostr [:pick $CurrentDate 4 6]];
-:local Month [:tostr [:pick $CurrentDate 0 3]];
-:local Year [:tostr [:pick $CurrentDate 7 [:len $CurrentDate]]];
-# Change this to your values 
-:local email "example@mail.com";
-# Password for the encrypted backup file. Note that since RouterOS v6.43 without a provided password, the backup file is unencrypted. 
-# See https://help.mikrotik.com/docs/spaces/ROS/pages/40992852/Backup
-:local ecryptionPassword "Your_encryption_password";
+:local Minute [:tostr [:pick $CurrentTime 3 5]];
+:local Second [:tostr [:pick $CurrentTime 6 8]];
 
-:local sysname [/system identity get name]
-:local textfileName
-:local backupfileName
-:local time [/system clock get time]
-:local date [/system clock get date]
-:local uptime [/system resource get uptime]
-:local newdate "";
-:for i from=0 to=([:len $date]-1) do={ :local tmp [:pick $date $i];
-:if ($tmp !="/") do={ :set newdate "$newdate$tmp" }
-:if ($tmp ="/") do={}
+# Create a consistent timestamp for filenames and email subject
+# Format: YYYY-Mon-DD-HHMM
+:local FileTimestamp "$Year-$Month-$Day-$Hour$Minute";
+# Format for email display: DD/Mon/YYYY HH:MM:SS
+:local EmailTimestamp "$Day/$Month/$Year $Hour:$Minute:$Second";
+
+:local MailSubject ("MikroTik Backup from " . $SystemName . " (" . $EmailTimestamp . ")");
+
+# Define filenames
+:local RscFileName "$SystemName-$FileTimestamp.rsc";
+:local BackupFileName "$SystemName-$FileTimestamp.backup";
+
+:local ExportSuccess false;
+:local BackupSuccess false;
+
+# --- Export configuration (.rsc file) ---
+:do {
+    /export file=$RscFileName;
+    :delay 1s; # Allow filesystem to catch up
+    :if ([:len [/file find name=$RscFileName]] > 0) do={
+        :log info "Configuration exported successfully to $RscFileName";
+        :set ExportSuccess true;
+    } else={
+        :log error "Failed to create export file: $RscFileName";
+    }
+} on-error={
+    :log error "Error during configuration export: $RscFileName";
 }
 
-:set textfileName ($newdate."-".$sysname.".rsc")
-:execute [/export file=$textfileName]
-
+# --- Create binary backup (.backup file) ---
 :do {
-  :local fileName ([/system identity get name]."__$Day_$Month_$Year__$Hour_$Min.backup");
-  /system backup save name=$fileName encryption=aes-sha256 password=$ecryptionPassword;
-  :log info "Backup file ($fileName) created success";
-  
-    :delay 2s;
-    :local logMessagesCritical;
-    :set logMessagesCritical "";
- 
-    :delay 2s;
-    :local logMessagesError;
-    :set logMessagesError "";
-			 :do {       
-    /tool e-mail send to=$email subject=($MailSubject." ($Day/$Month/$Year $Hour:$Min)") \
-      body=( \
-        "System information:". \
-        "\n____________________\n \n". \
-        "Identity: ".[/system identity get name]."\n". \		
-        "Board name: ".[/system resource get platform]." ".[/system resource get board-name]."\n". \
-        "Version: ".[/system resource get version]."\n". \
-        "Current firmware: ".[/system routerboard get current-firmware]."\n". \
-        "Free HDD space: ".[:put ([/system resource get free-hdd-space]/1048576);]."Mb, (total: ".[:put ([/system resource get total-hdd-space]/1048576);]."Mb)\n". \
-		    "Bad-blocks: ".[:put ([/system resource get bad-blocks])]."%\n". \
-        "Free memory: ".[:put ([/system resource get free-memory]/1048576);]."Mb,  (total: ".[:put ([/system resource get total-memory]/1048576);]."Mb)\n". \
-        "Uptime: ".[/system resource get uptime]."\n\n". \
-		    "Log message CRITICAL: \n********************************\n".[:put ($logMessagesCritical)]."\n". \
-        "Log message ERROR: \n********************************\n".[:put ($logMessagesError)]) file=($fileName,$textfileName);
-    :log info "Mail with backup sending success";
+    /system backup save name=$BackupFileName encryption=aes-sha256 password=$BackupEncryptionPassword;
+    :delay 1s; # Allow filesystem to catch up
+    :if ([:len [/file find name=$BackupFileName]] > 0) do={
+        :log info "Binary backup created successfully: $BackupFileName";
+        :set BackupSuccess true;
+    } else={
+        :log error "Failed to create binary backup file: $BackupFileName";
+    }
+} on-error={
+    :log error "Error during binary backup creation: $BackupFileName";
+}
+
+# Proceed only if both backups were successful
+:if ($ExportSuccess && $BackupSuccess) do={
+    # --- Gather Log Messages for Email ---
+    :local LogDateFilter ("$Month/$Day"); # Filter logs for current month/day e.g. "may/28"
+                                         # Note: This will catch logs for the current day of *any* year stored.
+                                         # For more precise filtering (e.g. last 24h) logic would be more complex.
+
+    :local CriticalLogMessages "No CRITICAL messages found for $LogDateFilter today.\n";
+    :local TempCriticalLog "";
+    :foreach i in=[/log find date~"$LogDateFilter" topics~"critical"] do={
+        :set TempCriticalLog ($TempCriticalLog . "[" . [/log get $i time] . "] " . [/log get $i message] . "\n");
+    }
+    :if ([:len $TempCriticalLog] > 0) do={ :set CriticalLogMessages $TempCriticalLog; }
+
+    :local ErrorLogMessages "No ERROR messages found for $LogDateFilter today.\n";
+    :local TempErrorLog "";
+    :foreach i in=[/log find date~"$LogDateFilter" topics~"error"] do={
+        :set TempErrorLog ($TempErrorLog . "[" . [/log get $i time] . "] " . [/log get $i message] . "\n");
+    }
+    :if ([:len $TempErrorLog] > 0) do={ :set ErrorLogMessages $TempErrorLog; }
+
+    # --- Send Email with Attachments ---
     :do {
-      :delay 30s;
-      /file remove $fileName;
-      /file remove $textfileName;
-      :log info "Remove backup file success";
-    } on-error={:log warning "Cannot remove backup file $fileName";};
-  } on-error={:log warning "Email sending failed!";};
-} on-error={:log error "Backup creation failed!";};
+        /tool e-mail send to=$EmailTo subject=$MailSubject \
+            body=( \
+                "System information:\n" . \
+                "____________________\n\n" . \
+                "Identity: " . $SystemName . "\n" . \
+                "Board name: " . [/system resource get platform] . " " . [/system resource get board-name] . "\n" . \
+                "RouterOS Version: " . [/system resource get version] . "\n" . \
+                "Firmware: " . [/system routerboard get current-firmware] . "\n" . \
+                "Free HDD: " . ([:tonum [/system resource get free-hdd-space]] / 1048576) . "MB (Total: " . ([:tonum [/system resource get total-hdd-space]] / 1048576) . "MB)\n" . \
+                "Bad Blocks: " . [/system resource get bad-blocks] . "%\n" . \
+                "Free Memory: " . ([:tonum [/system resource get free-memory]] / 1048576) . "MB (Total: " . ([:tonum [/system resource get total-memory]] / 1048576) . "MB)\n" . \
+                "Uptime: " . [/system resource get uptime] . "\n\n" . \
+                "CRITICAL Log Messages (for $LogDateFilter):\n********************************\n" . $CriticalLogMessages . "\n" . \
+                "ERROR Log Messages (for $LogDateFilter):\n********************************\n" . $ErrorLogMessages \
+            ) \
+            file=($BackupFileName, $RscFileName);
+        :log info "Email with backup files ($BackupFileName, $RscFileName) sent successfully to $EmailTo.";
+
+        # --- Remove backup files after sending ---
+        :do {
+            :delay 10s; # Give some time for the email tool to release files
+            /file remove $BackupFileName;
+            /file remove $RscFileName;
+            :log info "Backup files ($BackupFileName, $RscFileName) removed successfully from router.";
+        } on-error={
+            :log warning "Could not remove backup files ($BackupFileName, $RscFileName) from router. Please remove manually.";
+        }
+    } on-error={
+        :log error "Failed to send email with backup files!";
+    }
+} else={
+    :log warning "Email not sent because one or both backup files were not created successfully.";
+    # Optionally, try to remove any file that might have been created partially or failed
+    :if ($ExportSuccess = false && [:len [/file find name=$RscFileName]] > 0) do={ /file remove $RscFileName; }
+    :if ($BackupSuccess = false && [:len [/file find name=$BackupFileName]] > 0) do={ /file remove $BackupFileName; }
 }
