@@ -1,35 +1,43 @@
-# MikroTik Automated Backup Script with Email Notification
+# MikroTik Automated Backup Script (via Email)
 
-This RouterOS script automates the process of creating MikroTik configuration backups and sends them to a specified email address. It generates both a textual configuration export (`.rsc`) and a password-protected binary backup file (`.backup`).
+This RouterOS script automates the creation of MikroTik configuration backups and sends them to a specified email address. It generates both a textual configuration export (`.rsc`) and an AES-SHA256 encrypted binary backup file (`.backup`).
+
+**Tested on RouterOS version: 7.19.1**
 
 ## Key Features:
 
 * **Dual Backup Types:**
     * Creates a configuration export file (`/export file=filename.rsc`).
     * Creates a full binary backup file (`/system backup save name=filename.backup`) with AES-SHA256 encryption.
-* **Email Notification:** Sends both backup files as attachments to the specified email address.
-* **Informative Email Body:** The email body includes:
-    * Detailed system information (device identity, board name, RouterOS version, firmware version).
-    * Resource usage statistics (free HDD space, free memory, uptime).
-    * Critical and error log messages from the router for the current day.
-* **Timestamped Filenames:** Backup files are named using the system identity and a timestamp (YYYY-Mon-DD-HHMM) for easy identification and sorting.
-* **Automatic Cleanup:** Deletes the backup files from the router after a successful email dispatch.
-* **Error Handling:** Built-in logic to handle potential errors during backup creation, email sending, and file removal stages.
-* **Easy Configuration:** Key parameters (email address, encryption password) are easily configurable at the beginning of the script.
+* **Password from File:** The encryption password for the binary backup is read directly from a specified local file.
+    * **Important:** The script *assumes this file exists* and uses its content *as-is* (raw, without trimming whitespace or newlines). If the file is missing, the script will terminate with an error. Any newlines or spaces in the file will become part of the password, potentially leading to issues with backup decryption.
+* **Email Notification:** Sends both backup files as attachments.
+* **System Information in Email:** The email body includes key system details:
+    * Device identity, board name, RouterOS version, firmware version.
+    * Resource usage: HDD space, memory, uptime.
+* **No Logs in Email:** This version **does not** collect or include system logs in the email body to keep the email concise.
+* **Timestamped Filenames:** Backup files are named using the system identity and a timestamp (YYYY-Mon-DD-HHMM) for easy identification.
+* **Automatic Cleanup:** Removes backup files from the router after successful email dispatch.
+* **Error Handling:** Includes `do...on-error` blocks for critical operations.
 
 ## Configuration:
 
-1.  **Adjust variables at the beginning of the script:**
-    * `EmailTo`: Your email address to receive the backups.
-    * `BackupEncryptionPassword`: The password for encrypting the binary backup file. **Important:** Since RouterOS v6.43, if no password is provided, the `.backup` file will be unencrypted.
-2.  **Configure Email on MikroTik:** Ensure that email sending is configured on your router via `/tool e-mail`. You'll need to specify your SMTP server, port, and credentials if required. https://help.mikrotik.com/docs/spaces/ROS/pages/24805377/E-mail
+1.  **Script Variables (at the top of the script):**
+    * `:local EmailTo "your_email@example.com";` - Set your recipient email address.
+    * `:local PasswordFileName "password_file.txt";` - Set the name of the file that stores the encryption password. This file must be present in the root of the MikroTik filesystem.
+2.  **Password File:**
+    * Create the specified password file (e.g., `password_file.txt`) in the root of your MikroTik's filesystem.
+    * Place **only** the desired encryption password into this file. Be careful with extra spaces or newlines, as they will be treated as part of the password.
+3.  **MikroTik Email Setup:**
+    * Ensure that email sending is correctly configured on your router via `/tool e-mail` (SMTP server, port, credentials if required).
 
 ## Usage:
 
-1.  Copy the script to your MikroTik router (e.g., via WinBox, SSH, or by uploading to `Files`).
-2.  The recommended way to use this script is to add it to the scheduler (`/system scheduler`) for regular automated execution (e.g., daily).
+* **Important:** To prevent the `PasswordFileName` from being exposed in `.rsc` configuration exports, this script is intended to be run directly from the MikroTik Scheduler.
+* Copy the **entire script source code** and paste it into the `On Event` field of a new Scheduler task (`/system scheduler`).
+* Set the desired interval for the scheduler (e.g., daily).
 
-## Compatibility:
+## Notes on Encryption Password:
 
-* The script is designed and tested for RouterOS v7.x.
-* The password encryption feature for `.backup` files requires RouterOS v6.43 or newer.
+* The binary backup file (`.backup`) uses the password read from the specified file for AES-SHA256 encryption.
+* Remember that RouterOS v6.43 and later will create an *unencrypted* backup if the password string provided to the `/system backup save` command is empty. This script logs a warning if the password file is found but its content is empty.
