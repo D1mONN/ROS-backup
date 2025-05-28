@@ -14,7 +14,7 @@
 # Password for the encrypted backup file. Note that since RouterOS v6.43 without a provided password, the backup file is unencrypted. 
 # See https://help.mikrotik.com/docs/spaces/ROS/pages/40992852/Backup
 :local ecryptionPassword "Your_encryption_password";
-
+ 
 :local sysname [/system identity get name]
 :local textfileName
 :local backupfileName
